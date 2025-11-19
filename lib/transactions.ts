@@ -27,7 +27,7 @@ export type ExpenseInput = {
   amount: number;
   gstIncluded: boolean;
   receiptUrl?: string | null;
-  type?: ExpenseType;
+  type: ExpenseType;
 };
 
 type ExpenseRow = {
@@ -73,7 +73,7 @@ const buildPayload = (
   gst_included: input.gstIncluded,
   gst_claimable: calculateGstClaimable(input.amount, input.gstIncluded),
   receipt_url: input.receiptUrl ?? null,
-  type: input.type ?? "expense",
+  type: input.type,
 });
 
 export const getExpensesForCurrentUser = async (

@@ -357,19 +357,18 @@ export default function Dashboard() {
   );
 }
 
-const HelperRow = ({
-  label,
-  description,
-  value,
-}: {
+type HelperRowProps = {
   label: string;
-  description: string;
   value: string;
-}) => (
+  description?: string;
+  highlighted?: boolean;
+};
+
+const HelperRow = ({ label, description, value }: HelperRowProps) => (
   <div className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <p className="text-sm font-medium text-slate-800">{label}</p>
-      <p className="text-xs text-slate-500">{description}</p>
+      {description && <p className="text-xs text-slate-500">{description}</p>}
     </div>
     <p className="text-base font-semibold text-slate-900">{value}</p>
   </div>

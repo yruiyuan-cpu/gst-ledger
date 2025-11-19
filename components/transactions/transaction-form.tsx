@@ -36,6 +36,7 @@ type TransactionFormProps = {
     description: string;
     gstIncluded: boolean;
     receiptUrl?: string | null;
+    type: ExpenseType;
   }) => void | Promise<void>;
   onCancelHref: string;
   submitLabel?: string;
@@ -62,8 +63,8 @@ const TransactionForm = ({
   const [amount, setAmount] = useState(
     initialValues?.amount ? String(initialValues.amount) : "",
   );
-  const [category, setCategory] = useState<Category | "">(
-    (initialValues?.category as Category | undefined) ?? "",
+  const [category, setCategory] = useState<string>(
+    initialValues?.category ?? "",
   );
   const [gstIncluded, setGstIncluded] = useState(
     initialValues?.gstIncluded ?? true,
@@ -101,8 +102,13 @@ const TransactionForm = ({
     [numericAmount, gstPortion],
   );
 
-  const categoryOptions =
-    transactionType === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const categoryOptions = useMemo<string[]>(
+    () =>
+      transactionType === "income"
+        ? [...INCOME_CATEGORIES]
+        : [...EXPENSE_CATEGORIES],
+    [transactionType],
+  );
 
   const filteredCategories = useMemo(
     () =>
