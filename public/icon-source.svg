@@ -1,0 +1,11 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#75e3ff" />
+      <stop offset="100%" stop-color="#86ffc5" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="110" fill="url(#grad)" />
+  <text x="50%" y="43%" text-anchor="middle" font-family="'Inter', 'Helvetica', sans-serif" font-size="180" font-weight="700" fill="#ffffff">GST</text>
+  <path d="M170 340 L230 400 L360 270" stroke="#ffffff" stroke-width="40" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
