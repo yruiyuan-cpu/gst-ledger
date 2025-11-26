@@ -84,7 +84,7 @@ export default function TransactionsPage() {
     <div className="space-y-5">
       {showDeletedToast && (
         <div className="flex items-center justify-between rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm">
-          <span>Transaction deleted</span>
+          <span>Deleted</span>
           <span className="text-xs opacity-70">Updated just now</span>
         </div>
       )}

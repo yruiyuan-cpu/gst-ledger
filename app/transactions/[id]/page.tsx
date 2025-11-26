@@ -76,7 +76,7 @@ export default function TransactionDetailsPage() {
           }`}
         >
           <span>
-            {showDeletedToast ? "Transaction deleted" : "Transaction updated"}
+            {showDeletedToast ? "Deleted" : "Transaction updated"}
           </span>
           <button
             className="text-xs font-medium underline"

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import TransactionForm from "@/components/transactions/transaction-form";
 import { useTransactions } from "@/components/transactions/transactions-provider";
@@ -13,10 +13,12 @@ export const dynamic = "force-dynamic";
 export default function EditTransactionPage() {
   const params = useParams<{ id: string }>();
   const { user } = useAuth();
-  const { updateTransaction } = useTransactions();
+  const { updateTransaction, deleteTransaction } = useTransactions();
+  const router = useRouter();
   const [transaction, setTransaction] = useState<Expense | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -99,6 +101,47 @@ export default function EditTransactionPage() {
         submitLabel="Save changes"
         successLabel="Changes saved"
       />
+
+      <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-5 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-rose-800">Delete</h2>
+          <p className="text-sm text-rose-700">
+            Soft delete this transaction. It will be hidden from lists.
+          </p>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={async () => {
+              if (!transaction) return;
+              const confirmed = window.confirm(
+                "Delete this transaction? This action cannot be undone.",
+              );
+              if (!confirmed) return;
+              try {
+                setDeleting(true);
+                await deleteTransaction(transaction.id);
+                router.push("/transactions?deleted=1");
+              } catch (error) {
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to delete transaction.";
+                setSubmitError(message);
+              } finally {
+                setDeleting(false);
+              }
+            }}
+            disabled={deleting}
+            className="rounded-full bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+          >
+            {deleting ? "Deleting…" : "Delete transaction"}
+          </button>
+          <p className="text-xs text-rose-700">
+            Deletion requires confirmation and only affects your own data.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

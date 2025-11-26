@@ -17,6 +17,7 @@ export type Expense = {
   receiptUrl: string | null;
   createdAt?: string;
   updatedAt?: string;
+  deletedAt?: string | null;
   type: ExpenseType;
 };
 
@@ -42,6 +43,7 @@ type ExpenseRow = {
   receipt_url?: string | null;
   created_at?: string;
   updated_at?: string;
+  deleted_at?: string | null;
   type?: string;
 };
 
@@ -57,6 +59,7 @@ const mapExpenseFromRow = (row: ExpenseRow): Expense => ({
   receiptUrl: row.receipt_url ?? null,
   createdAt: row.created_at ?? undefined,
   updatedAt: row.updated_at ?? undefined,
+  deletedAt: row.deleted_at ?? null,
   type:
     row.type && row.type.toLowerCase() === "income" ? "income" : "expense",
 });
@@ -83,6 +86,7 @@ export const getExpensesForCurrentUser = async (
     .from("expenses")
     .select("*")
     .eq("user_id", userId)
+    .is("deleted_at", null)
     .order("date", { ascending: false })
     .limit(200);
 
@@ -103,7 +107,8 @@ export const getExpenseById = async (
     .select("*")
     .eq("id", id)
     .eq("user_id", userId)
-    .single();
+    .is("deleted_at", null)
+    .maybeSingle();
 
   if (error) {
     console.error("Failed to fetch expense", error);
@@ -165,7 +170,7 @@ export const updateExpense = async (
 export const deleteExpense = async (id: string, userId: string) => {
   const { error } = await supabase
     .from("expenses")
-    .delete()
+    .update({ deleted_at: new Date().toISOString() })
     .eq("id", id)
     .eq("user_id", userId);
 
