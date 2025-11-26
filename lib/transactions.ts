@@ -80,8 +80,14 @@ const buildPayload = (
 });
 
 export const getExpensesForCurrentUser = async (
-  userId: string,
+  userId: string | null,
 ): Promise<Expense[]> => {
+  // 1）如果还没拿到 userId，就先返回空数组，什么都不查
+  if (!userId) {
+    console.warn("getExpensesForCurrentUser called without userId");
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("expenses")
     .select("*")
@@ -90,13 +96,15 @@ export const getExpensesForCurrentUser = async (
     .order("date", { ascending: false })
     .limit(200);
 
+  // 2）如果 Supabase 报错，只打印一下，不再 throw，让页面正常继续
   if (error) {
     console.error("Failed to load expenses", error);
-    throw error;
+    return [];
   }
 
   return (data ?? []).map(mapExpenseFromRow);
 };
+
 
 export const getExpenseById = async (
   id: string,
