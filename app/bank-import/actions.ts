@@ -40,12 +40,22 @@ export const importBankRowsAction = async (
       }));
 
     const dateValues = datedRows.map((row) => row.normalizedDate);
-    if (dateValues.length === 0) {
+    const nonNullDates = dateValues.filter(
+      (value): value is string => value !== null && value !== undefined,
+    );
+    if (nonNullDates.length === 0) {
       return { ok: false, message: "No valid dates to import." };
     }
 
-    const minDate = dateValues.reduce((a, b) => (a < b ? a : b));
-    const maxDate = dateValues.reduce((a, b) => (a > b ? a : b));
+    const [firstDate, ...restDates] = nonNullDates;
+    const minDate = restDates.reduce(
+      (a, b) => (a < b ? a : b),
+      firstDate,
+    );
+    const maxDate = restDates.reduce(
+      (a, b) => (a > b ? a : b),
+      firstDate,
+    );
 
     // Fetch existing expenses in the date range to build dedupe set
     const { data: existingData, error: existingError } = await supabase

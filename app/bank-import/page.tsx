@@ -62,53 +62,55 @@ export default function BankImportPage() {
         }
 
         const dataRows = rows.slice(headerIndex + 1);
-        const mapped: BankImportRow[] = dataRows
-          .map((row, index) => {
-            const cells = Array.isArray(row) ? row : [];
-            const [
-              date,
-              uniqueId,
-              tranType,
-              chequeNbr,
-              payee,
-              memo,
-              amountStr,
-            ] = cells.map((value) =>
-              typeof value === "string" ? value.trim() : String(value ?? "").trim(),
-            );
+        const mappedWithNulls = dataRows.map((row, index): BankImportRow | null => {
+          const cells = Array.isArray(row) ? row : [];
+          const [
+            date,
+            uniqueId,
+            tranType,
+            chequeNbr,
+            payee,
+            memo,
+            amountStr,
+          ] = cells.map((value) =>
+            typeof value === "string" ? value.trim() : String(value ?? "").trim(),
+          );
 
-            if (!date || !amountStr) return null;
+          if (!date || !amountStr) return null;
 
-            const amount = Number.parseFloat(amountStr.replace(/,/g, ""));
-            if (Number.isNaN(amount)) return null;
+          const amount = Number.parseFloat(amountStr.replace(/,/g, ""));
+          if (Number.isNaN(amount)) return null;
 
-            const description = [payee, memo].filter(Boolean).join(" - ");
-            const counterparty = payee || null;
-            const transactionType: BankImportRow["transactionType"] =
-              amount < 0 ? "expense" : "income";
-            const combinedText = [description || "", counterparty || ""]
-              .join(" ")
-              .trim();
-            const categoryGuess = combinedText
-              ? guessCategoryForText(
-                  combinedText,
-                  transactionType,
-                  CATEGORY_OPTIONS,
-                )
-              : null;
+          const description = [payee, memo].filter(Boolean).join(" - ");
+          const counterparty = payee || null;
+          const transactionType: BankImportRow["transactionType"] =
+            amount < 0 ? "expense" : "income";
+          const combinedText = [description || "", counterparty || ""]
+            .join(" ")
+            .trim();
+          const categoryGuess = combinedText
+            ? guessCategoryForText(
+                combinedText,
+                transactionType,
+                CATEGORY_OPTIONS,
+              )
+            : null;
 
-            return {
-              id: `${date}-${uniqueId || tranType || chequeNbr || payee || index}`,
-              import: true,
-              date,
-              description: description || null,
-              amount,
-              counterparty,
-              transactionType,
-              categoryId: categoryGuess,
-            };
-          })
-          .filter((row): row is BankImportRow => Boolean(row));
+          return {
+            id: `${date}-${uniqueId || tranType || chequeNbr || payee || index}`,
+            import: true,
+            date,
+            description: description || null,
+            amount,
+            counterparty,
+            transactionType,
+            categoryId: categoryGuess,
+          };
+        });
+
+        const mapped: BankImportRow[] = mappedWithNulls.filter(
+          (row): row is BankImportRow => row !== null,
+        );
 
         if (mapped.length === 0) {
           setImportRows([]);
@@ -152,11 +154,16 @@ export default function BankImportPage() {
         refresh_token: session.refresh_token,
       });
 
-      const insertedCount = result.importedCount ?? result.insertedCount ?? 0;
-      const skippedCount = result.skippedCount ?? 0;
+      if (!result.ok || !("imported" in result)) {
+        setImportError(result.message ?? "Import failed. Please try again.");
+        return;
+      }
+
+      const importedCount = result.imported ?? 0;
+      const skippedCount = result.skipped ?? 0;
 
       router.push(
-        `/transactions?imported=${insertedCount}&skipped=${skippedCount}`,
+        `/transactions?imported=${importedCount}&skipped=${skippedCount}`,
       );
     } catch (error) {
       const message =

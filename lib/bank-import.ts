@@ -408,7 +408,7 @@ export const importBankRows = async (
   }
 
   if (rowsToInsert.length === 0) {
-    return { importedCount: 0, skippedCount };
+    return { imported: 0, skipped: skippedCount };
   }
 
   const { data: inserted, error } = await supabase
