@@ -3,22 +3,29 @@ export const INCOME_CATEGORIES = [
   "Property consulting income",
   "Other service income",
   "Rental income",
+  "Owner's funding",
+  "Refund from IRD",
+  "GST refund from IRD",
   "Other income",
 ] as const;
 
 export const EXPENSE_CATEGORIES = [
   "Office rent",
   "Office supplies & stationery",
-  "Internet",
-  "Mobile phone",
+  "Internet & mobile phone",
   "Software subscriptions & cloud services",
   "Travel & transport",
   "Marketing & advertising",
   "Client entertainment & meals",
-  "Project costs & purchases",
+  "Material cost",
   "Accounting, legal & professional services",
   "Insurance",
-  "Equipment & asset purchases",
+  "Asset cost",
+  "Financial loan",
+  "Pay to IRD",
+  "GST payment to IRD",
+  "Income tax to IRD",
+  "Other IRD payments",
   "Other general expenses",
 ] as const;
 

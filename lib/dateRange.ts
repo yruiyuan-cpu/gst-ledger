@@ -1,4 +1,16 @@
 export type DateRangePreset = "this_month" | "last_2_months" | "custom";
+export type DatePresetKey =
+  | "thisMonth"
+  | "lastMonth"
+  | "last2Months"
+  | "all";
+
+export const DATE_PRESETS: { key: DatePresetKey; label: string }[] = [
+  { key: "thisMonth", label: "This month" },
+  { key: "lastMonth", label: "Last month" },
+  { key: "last2Months", label: "Last 2 months" },
+  { key: "all", label: "All time" },
+];
 
 export type DateRange = {
   preset: DateRangePreset;
@@ -25,9 +37,43 @@ export const getRangeForPreset = (
 
   if (preset === "this_month") {
     const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    return { from: formatDate(start), to: formatDate(today) };
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0); // inclusive end of month
+    return { from: formatDate(start), to: formatDate(end) };
   }
 
   const start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-  return { from: formatDate(start), to: formatDate(today) };
+  const end = new Date(today.getFullYear(), today.getMonth() + 1, 0); // inclusive end of current month
+  return { from: formatDate(start), to: formatDate(end) };
+};
+
+export const getPresetRange = (
+  key: DatePresetKey,
+  baseDate = new Date(),
+): { from: string | null; to: string | null } => {
+  const today = new Date(
+    baseDate.getFullYear(),
+    baseDate.getMonth(),
+    baseDate.getDate(),
+  );
+
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  if (key === "thisMonth") {
+    return { from: formatDate(monthStart), to: formatDate(monthEnd) };
+  }
+
+  if (key === "lastMonth") {
+    const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+    return { from: formatDate(lastMonthStart), to: formatDate(lastMonthEnd) };
+  }
+
+  if (key === "last2Months") {
+    const start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    return { from: formatDate(start), to: formatDate(end) };
+  }
+
+  return { from: null, to: null };
 };

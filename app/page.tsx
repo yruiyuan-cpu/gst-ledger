@@ -6,13 +6,17 @@ import { useMemo, useRef, useState } from "react";
 import SummaryCard from "@/components/summary-card";
 import TransactionTable from "@/components/transaction-table";
 import { useTransactions } from "@/components/transactions/transactions-provider";
+import { useAuth } from "@/components/auth-provider";
 import {
   calculateExpenseSummary,
   filterTransactionsByRange,
   formatCurrency,
   sortByDateDesc,
 } from "@/lib/utils";
-import { calculateGstBreakdown } from "@/lib/transactions";
+import {
+  calculateGstBreakdown,
+  DASHBOARD_RECENT_TRANSACTIONS_LIMIT,
+} from "@/lib/transactions";
 import { getRangeForPreset } from "@/lib/dateRange";
 import type { DateRangePreset } from "@/lib/dateRange";
 import { useDateRange } from "@/components/date-range-context";
@@ -20,6 +24,7 @@ import { buildStatementCsv } from "@/lib/statement";
 
 export default function Dashboard() {
   const { transactions, loading } = useTransactions();
+  const { user } = useAuth();
   const { range, setRange } = useDateRange();
   const [selectedRange, setSelectedRange] =
     useState<DateRangePreset>("this_month");
@@ -29,9 +34,8 @@ export default function Dashboard() {
   } | null>(null);
   const customStartRef = useRef<HTMLInputElement | null>(null);
   const customEndRef = useRef<HTMLInputElement | null>(null);
-  const RECENT_PAGE_SIZE = 20;
   const [recentVisibleCount, setRecentVisibleCount] =
-    useState(RECENT_PAGE_SIZE);
+    useState(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
 
   const currentPending = pendingCustomRange ?? range;
 
@@ -43,7 +47,7 @@ export default function Dashboard() {
     }
     setPendingCustomRange(null);
     setRange(getRangeForPreset(value));
-    setRecentVisibleCount(RECENT_PAGE_SIZE);
+    setRecentVisibleCount(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
   };
 
   const handleCustomDateChange = (field: "from" | "to") => (value: string) => {
@@ -56,7 +60,7 @@ export default function Dashboard() {
   const applyCustomRange = () => {
     if (!pendingCustomRange?.from || !pendingCustomRange?.to) return;
     setRange(pendingCustomRange);
-    setRecentVisibleCount(RECENT_PAGE_SIZE);
+    setRecentVisibleCount(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
   };
 
   const filteredTransactions = useMemo(
@@ -121,21 +125,31 @@ export default function Dashboard() {
               Track your GST position across expenses and income.
             </p>
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Date range
-            </label>
-            <select
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              value={selectedRange}
-              onChange={(event) =>
-                handlePresetChange(event.target.value as DateRangePreset)
-              }
-            >
-              <option value="this_month">This month</option>
-              <option value="last_2_months">Last 2 months</option>
-              <option value="custom">Custom range</option>
-            </select>
+          <div className="space-y-2 sm:flex sm:items-end sm:justify-end sm:space-y-0 sm:gap-3">
+            <div className="flex-1 space-y-2 sm:flex sm:flex-col sm:items-start sm:justify-end">
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Date range
+              </label>
+              <select
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                value={selectedRange}
+                onChange={(event) =>
+                  handlePresetChange(event.target.value as DateRangePreset)
+                }
+              >
+                <option value="this_month">This month</option>
+                <option value="last_2_months">Last 2 months</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </div>
+            {user && (
+              <Link
+                href="/bank-import"
+                className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700"
+              >
+                Import from bank CSV
+              </Link>
+            )}
           </div>
         </div>
         {selectedRange === "custom" && (
@@ -193,17 +207,21 @@ export default function Dashboard() {
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <SummaryCard
-          title="Total spending"
-          subtitle={`Includes ${formatCurrency(summary.gstToClaim)} claimable GST`}
-          value={formatCurrency(summary.totalSpending)}
-        />
-        <SummaryCard
-          title="Total sales (GST-incl.)"
-          subtitle={`GST on sales: ${formatCurrency(gstTotals.totalIncomeGst)}`}
-          value={formatCurrency(gstTotals.totalIncomeAmount)}
-          accent="primary"
-        />
+        <Link href="/transactions?type=expense" className="block h-full">
+          <SummaryCard
+            title="Total spending"
+            subtitle={`Includes ${formatCurrency(summary.gstToClaim)} claimable GST`}
+            value={formatCurrency(summary.totalSpending)}
+          />
+        </Link>
+        <Link href="/transactions?type=income" className="block h-full">
+          <SummaryCard
+            title="Total sales (GST-incl.)"
+            subtitle={`GST on sales: ${formatCurrency(gstTotals.totalIncomeGst)}`}
+            value={formatCurrency(gstTotals.totalIncomeAmount)}
+            accent="primary"
+          />
+        </Link>
         <SummaryCard
           title="Net GST"
           subtitle={netLabel}
@@ -213,8 +231,8 @@ export default function Dashboard() {
         />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-5">
-        <div className="lg:col-span-3">
+      <section className="flex flex-col gap-4">
+        <section>
           <div className="h-full rounded-3xl border border-slate-100 bg-white p-6 shadow-lg shadow-slate-100/70">
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -292,19 +310,19 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-        </div>
-        <div className="lg:col-span-2">
-          <div className="h-full rounded-3xl border border-slate-100 bg-white p-6 shadow-lg shadow-slate-100/70">
+        </section>
+        <section className="w-full">
+          <div className="h-full rounded-3xl border border-slate-100 bg-white p-5 md:p-6 shadow-lg shadow-slate-100/70">
             <h3 className="text-lg font-semibold text-slate-900">
               Notes for this period
             </h3>
-            <ul className="mt-3 space-y-3 text-sm text-slate-600">
+            <ul className="mt-3 space-y-2 text-sm text-slate-600">
               <li>• Keep receipts handy; claimable GST updates instantly.</li>
               <li>• Overseas services and bank fees are set to “No GST” by default.</li>
               <li>• Record both income and expenses to refine your GST balance.</li>
             </ul>
           </div>
-        </div>
+        </section>
       </section>
 
       <section className="space-y-4">
@@ -343,7 +361,7 @@ export default function Dashboard() {
               type="button"
               onClick={() =>
                 setRecentVisibleCount(
-                  (count) => count + RECENT_PAGE_SIZE,
+                  (count) => count + DASHBOARD_RECENT_TRANSACTIONS_LIMIT,
                 )
               }
               className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-blue-200"

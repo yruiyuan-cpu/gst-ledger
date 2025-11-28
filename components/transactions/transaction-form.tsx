@@ -15,7 +15,7 @@ import {
 import {
   calculateGstFromGross,
   formatCurrency,
-  isGstDefaultIncluded,
+  getDefaultGstIncluded,
 } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth-provider";
@@ -66,17 +66,21 @@ const TransactionForm = ({
   const [category, setCategory] = useState<string>(
     initialValues?.category ?? "",
   );
+  const [transactionType, setTransactionType] = useState<ExpenseType>(
+    initialValues?.type ?? "expense",
+  );
   const [gstIncluded, setGstIncluded] = useState(
-    initialValues?.gstIncluded ?? true,
+    initialValues?.gstIncluded ??
+      getDefaultGstIncluded(
+        initialValues?.type ?? "expense",
+        initialValues?.category ?? "",
+      ),
   );
   const [description, setDescription] = useState(
     initialValues?.description ?? "",
   );
   const [receiptUrl, setReceiptUrl] = useState<string | undefined>(
     initialValues?.receiptUrl ?? undefined,
-  );
-  const [transactionType, setTransactionType] = useState<ExpenseType>(
-    initialValues?.type ?? "expense",
   );
   const [errors, setErrors] = useState<FormErrors>({});
   const [status, setStatus] = useState<"idle" | "success">("idle");
@@ -333,12 +337,14 @@ const TransactionForm = ({
                         <button
                           type="button"
                           key={option}
-                          onClick={() => {
-                            setCategory(option);
-                            setCategoryOpen(false);
-                            setCategoryQuery("");
-                            setGstIncluded(isGstDefaultIncluded(option as Category));
-                          }}
+                        onClick={() => {
+                          setCategory(option);
+                          setCategoryOpen(false);
+                          setCategoryQuery("");
+                          setGstIncluded(
+                            getDefaultGstIncluded(transactionType, option as Category),
+                          );
+                        }}
                           className={`flex w-full items-center justify-between px-4 py-2 text-left text-sm ${
                             category === option
                               ? "bg-blue-50 text-blue-700"

@@ -1,7 +1,12 @@
 export type Category = string;
 
 import { supabase } from "./supabase";
-import { calculateGstClaimable } from "./utils";
+import {
+  calculateGstClaimable,
+  getTransactionGstClaimable,
+  isIrdGstSettlement,
+} from "./utils";
+export { isIrdGstSettlement } from "./utils";
 
 export type ExpenseType = "expense" | "income";
 
@@ -47,22 +52,30 @@ type ExpenseRow = {
   type?: string;
 };
 
-const mapExpenseFromRow = (row: ExpenseRow): Expense => ({
-  id: String(row.id),
-  userId: row.user_id,
-  date: row.date,
-  category: row.category,
-  description: row.description ?? "",
-  amount: Number(row.amount ?? 0),
-  gstIncluded: Boolean(row.gst_included),
-  gstClaimable: Number(row.gst_claimable ?? 0),
-  receiptUrl: row.receipt_url ?? null,
-  createdAt: row.created_at ?? undefined,
-  updatedAt: row.updated_at ?? undefined,
-  deletedAt: row.deleted_at ?? null,
-  type:
-    row.type && row.type.toLowerCase() === "income" ? "income" : "expense",
-});
+export const DASHBOARD_RECENT_TRANSACTIONS_LIMIT = 50;
+
+const mapExpenseFromRow = (row: ExpenseRow): Expense => {
+  const normalizedType =
+    row.type && row.type.toLowerCase() === "income" ? "income" : "expense";
+  const amount = Number(row.amount ?? 0);
+  const gstIncluded = Boolean(row.gst_included);
+
+  return {
+    id: String(row.id),
+    userId: row.user_id,
+    date: row.date,
+    category: row.category,
+    description: row.description ?? "",
+    amount,
+    gstIncluded,
+    gstClaimable: calculateGstClaimable(amount, gstIncluded, normalizedType),
+    receiptUrl: row.receipt_url ?? null,
+    createdAt: row.created_at ?? undefined,
+    updatedAt: row.updated_at ?? undefined,
+    deletedAt: row.deleted_at ?? null,
+    type: normalizedType,
+  };
+};
 
 const buildPayload = (
   input: ExpenseInput,
@@ -74,7 +87,11 @@ const buildPayload = (
   description: input.description ?? "",
   amount: input.amount,
   gst_included: input.gstIncluded,
-  gst_claimable: calculateGstClaimable(input.amount, input.gstIncluded),
+  gst_claimable: calculateGstClaimable(
+    input.amount,
+    input.gstIncluded,
+    input.type,
+  ),
   receipt_url: input.receiptUrl ?? null,
   type: input.type,
 });
@@ -94,7 +111,7 @@ export const getExpensesForCurrentUser = async (
     .eq("user_id", userId)
     .is("deleted_at", null)
     .order("date", { ascending: false })
-    .limit(200);
+    .limit(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
 
   // 2）如果 Supabase 报错，只打印一下，不再 throw，让页面正常继续
   if (error) {
@@ -193,17 +210,20 @@ export const deleteExpense = async (id: string, userId: string) => {
 };
 
 export const calculateGstBreakdown = (records: Expense[]) => {
+  const normalTransactions = records.filter(
+    (tx) => !isIrdGstSettlement(tx),
+  );
   const initial = {
     totalExpenseAmount: 0,
     totalExpenseGstClaimable: 0,
     totalIncomeAmount: 0,
   };
-  const totals = records.reduce((acc, record) => {
+  const totals = normalTransactions.reduce((acc, record) => {
     if (record.type === "income") {
       acc.totalIncomeAmount += record.amount;
     } else {
       acc.totalExpenseAmount += record.amount;
-      acc.totalExpenseGstClaimable += record.gstClaimable;
+      acc.totalExpenseGstClaimable += getTransactionGstClaimable(record);
     }
     return acc;
   }, initial);

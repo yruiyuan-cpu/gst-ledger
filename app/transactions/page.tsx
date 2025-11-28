@@ -1,24 +1,76 @@
 'use client';
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { use, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import TransactionTable from "@/components/transaction-table";
 import { useTransactions } from "@/components/transactions/transactions-provider";
 import { ALL_CATEGORIES } from "@/lib/categories";
 import { filterTransactionsByRange, sortByDateDesc } from "@/lib/utils";
-import { useDateRange } from "@/components/date-range-context";
+import { isIrdGstSettlement } from "@/lib/transactions";
+import { DATE_PRESETS, getPresetRange, type DatePresetKey } from "@/lib/dateRange";
 
 const gstFilterOptions = ["All", "Includes GST", "No GST"] as const;
 
-export default function TransactionsPage() {
+export default function TransactionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const resolvedParams = use(searchParams);
   const { transactions, loading } = useTransactions();
-  const { range } = useDateRange();
-  const searchParams = useSearchParams();
-  const showDeletedToast = searchParams.get("deleted") === "1";
+  const router = useRouter();
+  const getParam = (key: string) => {
+    const value = resolvedParams?.[key];
+    return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+  };
+  const showDeletedToast = getParam("deleted") === "1";
+  const importedRaw = getParam("imported");
+  const skippedRaw = getParam("skipped");
+  const typeFilter =
+    typeof resolvedParams?.type === "string"
+      ? resolvedParams.type.toLowerCase()
+      : undefined;
+  const importedCount =
+    typeof importedRaw === "string" && Number.isFinite(Number(importedRaw))
+      ? Number(importedRaw)
+      : 0;
+  const skippedCount =
+    typeof skippedRaw === "string" && Number.isFinite(Number(skippedRaw))
+      ? Number(skippedRaw)
+      : 0;
+  const showImportedBanner =
+    (Number.isFinite(importedCount) && importedCount > 0) ||
+    (Number.isFinite(skippedCount) && skippedCount > 0);
+  let importMessage = "";
+  if (showImportedBanner) {
+    if (importedCount > 0 && skippedCount > 0) {
+      importMessage = `Bank statement import finished: ${importedCount} transactions added, ${skippedCount} duplicates skipped.`;
+    } else if (importedCount > 0 && skippedCount === 0) {
+      importMessage = `Bank statement import finished: ${importedCount} transactions added.`;
+    } else if (importedCount === 0 && skippedCount > 0) {
+      importMessage = `Bank statement import finished: no new transactions, ${skippedCount} duplicates skipped.`;
+    }
+  }
 
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const initialFrom = getParam("from") ?? "";
+  const initialTo = getParam("to") ?? "";
+
+  const matchPresetFromRange = (from: string, to: string): DatePresetKey | "" => {
+    if (!from && !to) return "all";
+    const match = DATE_PRESETS.find((preset) => {
+      if (preset.key === "all") return false;
+      const range = getPresetRange(preset.key);
+      return range.from === (from || null) && range.to === (to || null);
+    });
+    return match?.key ?? "";
+  };
+
+  const initialPreset = matchPresetFromRange(initialFrom, initialTo);
+
+  const [fromDate, setFromDate] = useState(initialFrom);
+  const [toDate, setToDate] = useState(initialTo);
+  const [presetKey, setPresetKey] = useState<DatePresetKey | "">(initialPreset);
   const [category, setCategory] = useState<string>("All categories");
   const [gstFilter, setGstFilter] = useState<(typeof gstFilterOptions)[number]>(
     "All",
@@ -30,7 +82,10 @@ export default function TransactionsPage() {
 
   const filteredTransactions = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const base = filterTransactionsByRange(transactions, range);
+    const base = filterTransactionsByRange(transactions, {
+      from: fromDate || "",
+      to: toDate || "",
+    });
 
     return [...base]
       .filter((transaction) => {
@@ -65,11 +120,22 @@ export default function TransactionsPage() {
         );
       })
       .sort(sortByDateDesc);
-  }, [transactions, range, fromDate, toDate, category, gstFilter, search]);
+  }, [transactions, fromDate, toDate, category, gstFilter, search]);
 
   const visibleTransactions = useMemo(
-    () => filteredTransactions.slice(0, visibleCount),
-    [filteredTransactions, visibleCount],
+    () => {
+      const typed = filteredTransactions.filter((tx) => {
+        if (typeFilter === "income" || typeFilter === "expense") {
+          if (isIrdGstSettlement(tx)) return false;
+        }
+
+        if (typeFilter === "income") return tx.type === "income";
+        if (typeFilter === "expense") return tx.type === "expense";
+        return true;
+      });
+      return typed.slice(0, visibleCount);
+    },
+    [filteredTransactions, typeFilter, visibleCount],
   );
 
   if (loading) {
@@ -88,6 +154,11 @@ export default function TransactionsPage() {
           <span className="text-xs opacity-70">Updated just now</span>
         </div>
       )}
+      {showImportedBanner && (
+        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {importMessage}
+        </div>
+      )}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -98,39 +169,103 @@ export default function TransactionsPage() {
             View and filter all your expenses and receipts.
           </p>
         </div>
-        <Link
-          href="/transactions/new"
-          className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-        >
-          Add transaction
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/bank-import"
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700"
+          >
+            Import from bank CSV
+          </Link>
+          <Link
+            href="/transactions/new"
+            className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          >
+            Add transaction
+          </Link>
+        </div>
       </div>
 
       <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/80">
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium text-slate-700">Date</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={fromDate}
+            <div className="flex flex-col gap-2">
+              <select
+                value={presetKey}
                 onChange={(event) => {
-                  setFromDate(event.target.value);
+                  const key = event.target.value as DatePresetKey | "";
+                  setPresetKey(key);
+                  if (!key) return;
+                  const range = getPresetRange(key as DatePresetKey);
+                  setFromDate(range.from ?? "");
+                  setToDate(range.to ?? "");
                   resetVisible();
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                placeholder="From"
-              />
-              <input
-                type="date"
-                value={toDate}
-                onChange={(event) => {
-                  setToDate(event.target.value);
+              >
+                <option value="">Custom</option>
+                {DATE_PRESETS.map((preset) => (
+                  <option key={preset.key} value={preset.key}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(event) => {
+                    setFromDate(event.target.value);
+                    setPresetKey("");
+                    resetVisible();
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="From"
+                />
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(event) => {
+                    setToDate(event.target.value);
+                    setPresetKey("");
+                    resetVisible();
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="To"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const urlParams = new URLSearchParams();
+                  Object.entries(resolvedParams ?? {}).forEach(
+                    ([key, value]) => {
+                      if (typeof value === "string") {
+                        urlParams.set(key, value);
+                      } else if (Array.isArray(value)) {
+                        value.forEach((v) => urlParams.append(key, v));
+                      }
+                    },
+                  );
+                  if (fromDate) urlParams.set("from", fromDate);
+                  else urlParams.delete("from");
+                  if (toDate) urlParams.set("to", toDate);
+                  else urlParams.delete("to");
+                  if (importedCount) urlParams.set("imported", String(importedCount));
+                  else urlParams.delete("imported");
+                  if (skippedCount) urlParams.set("skipped", String(skippedCount));
+                  else urlParams.delete("skipped");
+                  router.push(
+                    `/transactions${
+                      urlParams.toString() ? `?${urlParams.toString()}` : ""
+                    }`,
+                  );
                   resetVisible();
                 }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                placeholder="To"
-              />
+                className="inline-flex w-fit rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              >
+                Apply filters
+              </button>
             </div>
           </div>
           <div className="flex flex-col gap-2">

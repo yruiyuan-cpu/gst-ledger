@@ -23,26 +23,74 @@ export const displayAmountWithSign = (
   return `${sign}${formatCurrency(amount)}`;
 };
 
-export const isGstDefaultIncluded = (category?: Category) => {
-  if (!category) return true;
-  return !["Overseas service", "Bank fees"].includes(category);
+export const getDefaultGstIncluded = (
+  _type: "expense" | "income",
+  categoryName?: Category | null,
+) => {
+  const name = (categoryName ?? "").toLowerCase();
+
+  // Exceptions: these should default to no GST.
+  if (name.includes("financial loan")) return false;
+  if (name.includes("owner") && name.includes("funding")) return false;
+  if (name.includes("pay to ird")) return false;
+  if (name.includes("refund from ird")) return false;
+  if (name.includes("ird")) return false;
+
+  // Everything else defaults to GST included.
+  return true;
 };
+
+// Keep backward-compatible name used elsewhere.
+export const isGstDefaultIncluded = (category?: Category) =>
+  getDefaultGstIncluded("expense", category);
 
 export const sortByDateDesc = (
   a: { date: string },
   b: { date: string },
 ) => new Date(b.date).getTime() - new Date(a.date).getTime();
 
-export const calculateExpenseSummary = (transactions: Expense[]) => {
-  const expenses = transactions.filter((tx) => tx.type !== "income");
+export const getTransactionGstClaimable = (tx: Expense) => {
+  const raw = (tx as { gstClaimable?: number; gst_claimable?: number }).gstClaimable ?? (tx as { gst_claimable?: number }).gst_claimable ?? 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+};
 
-  const totalSpending = expenses.reduce((sum, tx) => sum + tx.amount, 0);
+export const isIrdGstSettlement = (tx: Expense) => {
+  const category = tx.category?.toLowerCase?.() ?? "";
+  const memo =
+    (tx as { memo?: string | null }).memo?.toLowerCase?.() ?? "";
+  const payee =
+    (tx as { payee?: string | null }).payee?.toLowerCase?.() ?? "";
+
+  // Treat any transaction involving IRD as a GST settlement transaction
+  // (e.g. GST payment to IRD or GST refund from IRD).
+  return (
+    category.includes("ird") ||
+    memo.includes("ird") ||
+    payee.includes("ird")
+  );
+};
+
+export const calculateExpenseSummary = (transactions: Expense[]) => {
+  const normalTransactions = transactions.filter(
+    (tx) => !isIrdGstSettlement(tx),
+  );
+  const expenses = normalTransactions.filter((tx) => tx.type !== "income");
+
+  // Amounts should already be positive; Math.abs guards older rows that may still be negative.
+  const totalSpending = expenses.reduce(
+    (sum, tx) => sum + Math.abs(tx.amount),
+    0,
+  );
   const gstAble = expenses
     .filter((tx) => tx.gstIncluded)
-    .reduce((sum, tx) => sum + tx.amount, 0);
-  const gstToClaim = expenses.reduce((sum, tx) => sum + tx.gstClaimable, 0);
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+  const gstToClaim = expenses.reduce(
+    (sum, tx) => sum + getTransactionGstClaimable(tx),
+    0,
+  );
 
-  return { totalSpending, gstAble, gstToClaim };
+  return { totalSpending, gstAble, gstToClaim, gstClaimable: gstToClaim };
 };
 
 export const calculateGstFromGross = (amount: number) =>
@@ -52,10 +100,15 @@ export const calculateGstFromGross = (amount: number) =>
 export const calculateGstClaimable = (
   amount: number,
   gstIncluded: boolean,
+  type?: Expense["type"],
 ): number => {
   if (!gstIncluded) return 0;
-  const value = (amount * 0.15) / 1.15;
-  return Math.round(value * 100) / 100;
+  if (type && type.toLowerCase() === "income") return 0;
+
+  const GST_RATE = 0.15;
+  const abs = Math.abs(amount);
+  const gstComponent = abs - abs / (1 + GST_RATE);
+  return Number(gstComponent.toFixed(2));
 };
 
 export const filterTransactionsByRange = (
