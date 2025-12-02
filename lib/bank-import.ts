@@ -1,6 +1,13 @@
 import { ALL_CATEGORIES } from "./categories";
 import { supabase } from "./supabase";
 import { getDefaultGstIncluded } from "./utils";
+import { getOrCreateUserSettings } from "./user-settings";
+import {
+  getPeriodRange,
+  getPeriodStatusForDate,
+  type GstPeriodStatus,
+} from "./gstPeriods";
+import type { GstFrequency } from "./utils";
 
 export type BankRawRow = {
   raw: Record<string, unknown>;
@@ -317,7 +324,28 @@ export const guessImportRow = (
 export const importBankRows = async (
   userId: string,
   rows: BankImportRow[],
-): Promise<{ imported: number; skipped: number }> => {
+): Promise<{ imported: number; skipped: number; lockedSkipped: number }> => {
+  const userSettings = await getOrCreateUserSettings(supabase, userId);
+  const frequency = userSettings.gst_frequency as GstFrequency;
+  const periodStatusCache = new Map<string, GstPeriodStatus>();
+
+  const getStatusForDate = async (date: string) => {
+    const jsDate = new Date(date);
+    const range = getPeriodRange(frequency, jsDate);
+    const key = `${range.start.toISOString().slice(0, 10)}|${range.end.toISOString().slice(0, 10)}`;
+    if (periodStatusCache.has(key)) {
+      return periodStatusCache.get(key);
+    }
+    const status = await getPeriodStatusForDate(
+      supabase,
+      userId,
+      jsDate,
+      frequency,
+    );
+    periodStatusCache.set(key, status);
+    return status;
+  };
+
   const validRows = rows
     .filter((row) => row.import && row.amount !== null && row.date)
     .map((row) => ({
@@ -368,6 +396,7 @@ export const importBankRows = async (
     source: string;
   }[] = [];
   let skippedCount = 0;
+  let lockedSkipped = 0;
 
   for (let index = 0; index < validRows.length; index += 1) {
     const row = validRows[index];
@@ -380,6 +409,12 @@ export const importBankRows = async (
     ].filter(Boolean);
     const description =
       descriptionParts.join(" - ") || "Imported transaction";
+
+    const status = await getStatusForDate(row.date);
+    if (status === "filed") {
+      lockedSkipped += 1;
+      continue;
+    }
 
     const dedupeKey = buildDedupeKey({
       date: row.date,
@@ -408,7 +443,7 @@ export const importBankRows = async (
   }
 
   if (rowsToInsert.length === 0) {
-    return { imported: 0, skipped: skippedCount };
+    return { imported: 0, skipped: skippedCount, lockedSkipped };
   }
 
   const { data: inserted, error } = await supabase
@@ -421,5 +456,5 @@ export const importBankRows = async (
   }
 
   const insertedCount = inserted?.length ?? rowsToInsert.length;
-  return { imported: insertedCount, skipped: skippedCount };
+  return { imported: insertedCount, skipped: skippedCount, lockedSkipped };
 };

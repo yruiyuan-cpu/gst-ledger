@@ -1,89 +1,94 @@
 'use client';
 
 import Link from "next/link";
-import { format } from "date-fns";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import SummaryCard from "@/components/summary-card";
 import TransactionTable from "@/components/transaction-table";
 import { useTransactions } from "@/components/transactions/transactions-provider";
 import { useAuth } from "@/components/auth-provider";
 import {
-  calculateExpenseSummary,
   filterTransactionsByRange,
   formatCurrency,
   sortByDateDesc,
+  type GstSummary,
+  type GstFrequency,
+  getGstSummaryForRange,
 } from "@/lib/utils";
+import { DASHBOARD_RECENT_TRANSACTIONS_LIMIT } from "@/lib/transactions";
+import { supabase } from "@/lib/supabase";
+import { getOrCreateUserSettings } from "@/lib/user-settings";
 import {
-  calculateGstBreakdown,
-  DASHBOARD_RECENT_TRANSACTIONS_LIMIT,
-} from "@/lib/transactions";
-import { getRangeForPreset } from "@/lib/dateRange";
-import type { DateRangePreset } from "@/lib/dateRange";
-import { useDateRange } from "@/components/date-range-context";
-import { buildStatementCsv } from "@/lib/statement";
+  getOrCreateCurrentPeriod,
+  type GstPeriod,
+} from "@/lib/gstPeriods";
 
 export default function Dashboard() {
   const { transactions, loading } = useTransactions();
   const { user } = useAuth();
-  const { range, setRange } = useDateRange();
-  const [selectedRange, setSelectedRange] =
-    useState<DateRangePreset>("this_month");
-  const [pendingCustomRange, setPendingCustomRange] = useState<{
-    from: string;
-    to: string;
-  } | null>(null);
-  const customStartRef = useRef<HTMLInputElement | null>(null);
-  const customEndRef = useRef<HTMLInputElement | null>(null);
   const [recentVisibleCount, setRecentVisibleCount] =
     useState(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
+  const [frequency, setFrequency] = useState<GstFrequency>("two-monthly");
+  const [period, setPeriod] = useState<GstPeriod | null>(null);
+  const [gstSummary, setGstSummary] = useState<GstSummary>({
+    totalSalesInclGst: 0,
+    totalSpendingInclGst: 0,
+    gstOnSales: 0,
+    gstToClaim: 0,
+    netGst: 0,
+  });
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const currentPending = pendingCustomRange ?? range;
+  useEffect(() => {
+    const load = async () => {
+      if (!user) {
+        setSummaryLoading(false);
+        return;
+      }
+      setSummaryLoading(true);
+      setError(null);
+      try {
+        const settings = await getOrCreateUserSettings(supabase, user.id);
+        const freq = settings.gst_frequency as GstFrequency;
+        setFrequency(freq);
+        const currentPeriod = await getOrCreateCurrentPeriod(
+          supabase,
+          user.id,
+          freq,
+          new Date(),
+        );
+        setPeriod(currentPeriod);
+        const summary = await getGstSummaryForRange(
+          supabase,
+          user.id,
+          new Date(currentPeriod.start_date),
+          new Date(currentPeriod.end_date),
+        );
+        setGstSummary(summary);
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : "Failed to load GST summary.";
+        setError(msg);
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
 
-  const handlePresetChange = (value: DateRangePreset) => {
-    setSelectedRange(value);
-    if (value === "custom") {
-      setPendingCustomRange(range);
-      return;
-    }
-    setPendingCustomRange(null);
-    setRange(getRangeForPreset(value));
-    setRecentVisibleCount(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
-  };
+    load();
+  }, [user]);
 
-  const handleCustomDateChange = (field: "from" | "to") => (value: string) => {
-    setPendingCustomRange((prev) => {
-      const base = prev ?? range;
-      return { ...base, [field]: value };
+  const filteredTransactions = useMemo(() => {
+    if (!period) return transactions;
+    return filterTransactionsByRange(transactions, {
+      from: period.start_date,
+      to: period.end_date,
     });
-  };
+  }, [transactions, period]);
 
-  const applyCustomRange = () => {
-    if (!pendingCustomRange?.from || !pendingCustomRange?.to) return;
-    setRange(pendingCustomRange);
-    setRecentVisibleCount(DASHBOARD_RECENT_TRANSACTIONS_LIMIT);
-  };
-
-  const filteredTransactions = useMemo(
-    () => filterTransactionsByRange(transactions, range),
-    [transactions, range],
-  );
-
-  const summary = useMemo(
-    () => calculateExpenseSummary(filteredTransactions),
-    [filteredTransactions],
-  );
-  const gstTotals = useMemo(
-    () => calculateGstBreakdown(filteredTransactions),
-    [filteredTransactions],
-  );
-  const netLabel = gstTotals.netGst >= 0 ? "GST to pay" : "GST refund";
-  const statementSummary = {
-    totalSpending: summary.totalSpending,
-    totalSales: gstTotals.totalIncomeAmount,
-    gstOnSales: gstTotals.totalIncomeGst,
-    gstToClaim: summary.gstToClaim,
-    netGst: gstTotals.netGst,
-  };
+  const netLabel = gstSummary.netGst >= 0 ? "GST to pay" : "GST refund";
 
   const visibleRecentTransactions = useMemo(
     () =>
@@ -97,15 +102,11 @@ export default function Dashboard() {
   const recentSubtitle = recentHasMore
     ? `Showing ${visibleRecentTransactions.length} of ${filteredTransactions.length} transactions`
     : `Showing ${filteredTransactions.length} transactions`;
-  const formattedPeriod =
-    range.from && range.to
-      ? `${format(new Date(range.from), "yyyy/MM/dd")} – ${format(
-          new Date(range.to),
-          "yyyy/MM/dd",
-        )}`
-      : "No date range selected";
+  const formattedPeriod = period
+    ? `${period.start_date} – ${period.end_date}`
+    : "No period";
 
-  if (loading) {
+  if (loading || summaryLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center text-sm text-slate-600">
         Loading your expenses…
@@ -126,22 +127,25 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="space-y-2 sm:flex sm:items-end sm:justify-end sm:space-y-0 sm:gap-3">
-            <div className="flex-1 space-y-2 sm:flex sm:flex-col sm:items-start sm:justify-end">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Date range
-              </label>
-              <select
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                value={selectedRange}
-                onChange={(event) =>
-                  handlePresetChange(event.target.value as DateRangePreset)
-                }
-              >
-                <option value="this_month">This month</option>
-                <option value="last_2_months">Last 2 months</option>
-                <option value="custom">Custom range</option>
-              </select>
+            <div className="flex flex-col">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Current GST period
+              </p>
+              <p className="text-sm font-medium text-slate-900">
+                {formattedPeriod}
+              </p>
+              <p className="text-xs text-slate-500 capitalize">
+                Frequency: {frequency.replace("-", " ")}
+              </p>
             </div>
+            {user && (
+              <Link
+                href="/gst-return"
+                className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700"
+              >
+                View GST return
+              </Link>
+            )}
             {user && (
               <Link
                 href="/bank-import"
@@ -152,83 +156,33 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-        {selectedRange === "custom" && (
-          <>
-            <div className="flex flex-col gap-3 text-sm sm:flex-row">
-              <div
-                onClick={() => customStartRef.current?.showPicker()}
-                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100"
-              >
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  From
-                </label>
-                <input
-                  ref={customStartRef}
-                  type="date"
-                  value={currentPending.from}
-                  onChange={(event) =>
-                    handleCustomDateChange("from")(event.target.value)
-                  }
-                  className="w-full bg-transparent text-slate-900 outline-none"
-                />
-              </div>
-              <div
-                onClick={() => customEndRef.current?.showPicker()}
-                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100"
-              >
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  To
-                </label>
-                <input
-                  ref={customEndRef}
-                  type="date"
-                  value={currentPending.to}
-                  onChange={(event) =>
-                    handleCustomDateChange("to")(event.target.value)
-                  }
-                  className="w-full bg-transparent text-slate-900 outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                disabled={
-                  !pendingCustomRange?.from || !pendingCustomRange?.to
-                }
-                onClick={applyCustomRange}
-                className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Apply
-              </button>
-            </div>
-          </>
-        )}
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Link href="/transactions?type=expense" className="block h-full">
           <SummaryCard
             title="Total spending"
-            subtitle={`Includes ${formatCurrency(summary.gstToClaim)} claimable GST`}
-            value={formatCurrency(summary.totalSpending)}
+            subtitle={`Includes ${formatCurrency(gstSummary.gstToClaim)} claimable GST`}
+            value={formatCurrency(gstSummary.totalSpendingInclGst)}
           />
         </Link>
         <Link href="/transactions?type=income" className="block h-full">
           <SummaryCard
             title="Total sales (GST-incl.)"
-            subtitle={`GST on sales: ${formatCurrency(gstTotals.totalIncomeGst)}`}
-            value={formatCurrency(gstTotals.totalIncomeAmount)}
+            subtitle={`GST on sales: ${formatCurrency(gstSummary.gstOnSales)}`}
+            value={formatCurrency(gstSummary.totalSalesInclGst)}
             accent="primary"
           />
         </Link>
-        <SummaryCard
-          title="Net GST"
-          subtitle={netLabel}
-          value={formatCurrency(Math.abs(gstTotals.netGst))}
-          accent={gstTotals.netGst >= 0 ? "muted" : "success"}
-          chip={netLabel}
-        />
+        <Link href="/gst-return" className="block h-full">
+          <SummaryCard
+            title="Net GST"
+            subtitle={netLabel}
+            value={formatCurrency(Math.abs(gstSummary.netGst))}
+            accent={gstSummary.netGst >= 0 ? "muted" : "success"}
+            chip="This period"
+          />
+        </Link>
       </section>
 
       <section className="flex flex-col gap-4">
@@ -236,60 +190,95 @@ export default function Dashboard() {
           <div className="h-full rounded-3xl border border-slate-100 bg-white p-6 shadow-lg shadow-slate-100/70">
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+                <Link href="/gst-return" className="block">
                   <h2 className="text-lg font-semibold text-slate-900">
                     NZ IRD – GST return helper
                   </h2>
                   <p className="text-sm text-slate-500">
                     Statement period: {formattedPeriod}
                   </p>
-                </div>
+                </Link>
                 <button
                   type="button"
-                  onClick={() => {
-                    const csv = buildStatementCsv({
-                      from: range.from,
-                      to: range.to,
-                      transactions: filteredTransactions,
-                      summary: statementSummary,
-                    });
-                    const blob = new Blob([csv], {
-                      type: "text/csv;charset=utf-8;",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.setAttribute(
-                      "download",
-                      `gst-statement-${range.from}-${range.to}.csv`,
-                    );
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    URL.revokeObjectURL(url);
+                  disabled={!period || exporting}
+                  onClick={async () => {
+                    if (!period) return;
+                    setExporting(true);
+                    setError(null);
+                    try {
+                      const { data, error: sessionError } =
+                        await supabase.auth.getSession();
+                      if (
+                        sessionError ||
+                        !data?.session?.access_token ||
+                        !data.session.refresh_token
+                      ) {
+                        throw new Error("Please sign in again to export CSV.");
+                      }
+                      const response = await fetch("/gst-return/export", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          from: period.start_date,
+                          to: period.end_date,
+                          access_token: data.session.access_token,
+                          refresh_token: data.session.refresh_token,
+                        }),
+                      });
+
+                      if (!response.ok) {
+                        throw new Error("Failed to export CSV.");
+                      }
+
+                      const blob = await response.blob();
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement("a");
+                      link.href = url;
+                      link.setAttribute(
+                        "download",
+                        `gst-statement-${period.start_date}-${period.end_date}.csv`,
+                      );
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                      URL.revokeObjectURL(url);
+                    } catch (err) {
+                      const msg =
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to export CSV.";
+                      setError(msg);
+                    } finally {
+                      setExporting(false);
+                    }
                   }}
                   className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm transition hover:border-blue-200"
                 >
-                  Download statement (CSV)
+                  {exporting ? "Exporting…" : "Download statement (CSV)"}
                 </button>
               </div>
+              {error && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {error}
+                </div>
+              )}
               <div className="space-y-3 text-sm">
                 <HelperRow
                   label="Total purchases & expenses (GST-incl.)"
-                  value={formatCurrency(summary.totalSpending)}
+                  value={formatCurrency(gstSummary.totalSpendingInclGst)}
                 />
                 <HelperRow
                   label="Total sales (GST-incl.)"
-                  value={formatCurrency(gstTotals.totalIncomeAmount)}
+                  value={formatCurrency(gstSummary.totalSalesInclGst)}
                 />
                 <div className="border-t border-slate-100 pt-3 space-y-3">
                   <HelperRow
                     label="GST to claim (input tax)"
-                    value={formatCurrency(summary.gstToClaim)}
+                    value={formatCurrency(gstSummary.gstToClaim)}
                   />
                   <HelperRow
                     label="GST on sales (output tax)"
-                    value={formatCurrency(gstTotals.totalIncomeGst)}
+                    value={formatCurrency(gstSummary.gstOnSales)}
                   />
                   <div className="flex items-center justify-between">
                     <div>
@@ -298,12 +287,12 @@ export default function Dashboard() {
                     </div>
                     <span
                       className={`text-base font-semibold ${
-                        gstTotals.netGst >= 0
+                        gstSummary.netGst >= 0
                           ? "text-rose-600"
                           : "text-emerald-600"
                       }`}
                     >
-                      {formatCurrency(Math.abs(gstTotals.netGst))}
+                      {formatCurrency(Math.abs(gstSummary.netGst))}
                     </span>
                   </div>
                 </div>

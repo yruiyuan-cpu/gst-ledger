@@ -27,6 +27,7 @@ export default function TransactionsPage({
   const showDeletedToast = getParam("deleted") === "1";
   const importedRaw = getParam("imported");
   const skippedRaw = getParam("skipped");
+  const lockedRaw = getParam("locked");
   const typeFilter =
     typeof resolvedParams?.type === "string"
       ? resolvedParams.type.toLowerCase()
@@ -39,17 +40,26 @@ export default function TransactionsPage({
     typeof skippedRaw === "string" && Number.isFinite(Number(skippedRaw))
       ? Number(skippedRaw)
       : 0;
+  const lockedCount =
+    typeof lockedRaw === "string" && Number.isFinite(Number(lockedRaw))
+      ? Number(lockedRaw)
+      : 0;
   const showImportedBanner =
     (Number.isFinite(importedCount) && importedCount > 0) ||
-    (Number.isFinite(skippedCount) && skippedCount > 0);
+    (Number.isFinite(skippedCount) && skippedCount > 0) ||
+    (Number.isFinite(lockedCount) && lockedCount > 0);
   let importMessage = "";
   if (showImportedBanner) {
-    if (importedCount > 0 && skippedCount > 0) {
-      importMessage = `Bank statement import finished: ${importedCount} transactions added, ${skippedCount} duplicates skipped.`;
-    } else if (importedCount > 0 && skippedCount === 0) {
-      importMessage = `Bank statement import finished: ${importedCount} transactions added.`;
-    } else if (importedCount === 0 && skippedCount > 0) {
-      importMessage = `Bank statement import finished: no new transactions, ${skippedCount} duplicates skipped.`;
+    const lockedPart =
+      lockedCount > 0
+        ? ` ${lockedCount} in filed periods skipped.`
+        : "";
+    if (importedCount > 0 && (skippedCount > 0 || lockedCount > 0)) {
+      importMessage = `Bank statement import finished: ${importedCount} transactions added, ${skippedCount} duplicates skipped.${lockedPart}`;
+    } else if (importedCount > 0) {
+      importMessage = `Bank statement import finished: ${importedCount} transactions added.${lockedPart}`;
+    } else if (importedCount === 0 && (skippedCount > 0 || lockedCount > 0)) {
+      importMessage = `Bank statement import finished: no new transactions, ${skippedCount} duplicates skipped.${lockedPart}`;
     }
   }
 
@@ -255,6 +265,8 @@ export default function TransactionsPage({
                   else urlParams.delete("imported");
                   if (skippedCount) urlParams.set("skipped", String(skippedCount));
                   else urlParams.delete("skipped");
+                  if (lockedCount) urlParams.set("locked", String(lockedCount));
+                  else urlParams.delete("locked");
                   router.push(
                     `/transactions${
                       urlParams.toString() ? `?${urlParams.toString()}` : ""

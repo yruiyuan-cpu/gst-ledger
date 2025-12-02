@@ -2,11 +2,13 @@
 
 export const dynamic = "force-dynamic";
 
+import { useState } from "react";
 import TransactionForm from "@/components/transactions/transaction-form";
 import { useTransactions } from "@/components/transactions/transactions-provider";
 
 export default function NewTransactionPage() {
   const { addTransaction } = useTransactions();
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   return (
     <div className="space-y-5">
@@ -21,10 +23,25 @@ export default function NewTransactionPage() {
         </div>
       </div>
 
+      {submitError && (
+        <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {submitError}
+        </p>
+      )}
+
       <TransactionForm
         mode="create"
         onSubmit={async (values) => {
-          await addTransaction(values);
+          try {
+            await addTransaction(values);
+            setSubmitError(null);
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Failed to save transaction.";
+            setSubmitError(message);
+          }
         }}
         onCancelHref="/transactions"
         redirectTo="/transactions"

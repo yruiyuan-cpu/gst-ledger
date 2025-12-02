@@ -3,10 +3,14 @@ export type Category = string;
 import { supabase } from "./supabase";
 import {
   calculateGstClaimable,
-  getTransactionGstClaimable,
-  isIrdGstSettlement,
+  calculateGstSummary,
 } from "./utils";
 export { isIrdGstSettlement } from "./utils";
+import {
+  getPeriodStatusForDate,
+} from "./gstPeriods";
+import { getOrCreateUserSettings } from "./user-settings";
+import type { GstFrequency } from "./utils";
 
 export type ExpenseType = "expense" | "income";
 
@@ -36,6 +40,30 @@ export type ExpenseInput = {
   type: ExpenseType;
 };
 
+const LOCKED_PERIOD_MESSAGE =
+  "This GST period has been filed. Changes are not allowed. Please create an adjustment in a later period instead.";
+
+const getUserFrequency = async (userId: string): Promise<GstFrequency> => {
+  const settings = await getOrCreateUserSettings(supabase, userId);
+  return settings.gst_frequency;
+};
+
+const ensurePeriodAllowsDate = async (
+  userId: string,
+  date: string,
+  frequency: GstFrequency,
+) => {
+  const status = await getPeriodStatusForDate(
+    supabase,
+    userId,
+    new Date(date),
+    frequency,
+  );
+  if (status === "filed") {
+    throw new Error(LOCKED_PERIOD_MESSAGE);
+  }
+};
+
 type ExpenseRow = {
   id: string | number;
   user_id: string;
@@ -54,7 +82,7 @@ type ExpenseRow = {
 
 export const DASHBOARD_RECENT_TRANSACTIONS_LIMIT = 50;
 
-const mapExpenseFromRow = (row: ExpenseRow): Expense => {
+export const mapExpenseFromRow = (row: ExpenseRow): Expense => {
   const normalizedType =
     row.type && row.type.toLowerCase() === "income" ? "income" : "expense";
   const amount = Number(row.amount ?? 0);
@@ -68,7 +96,9 @@ const mapExpenseFromRow = (row: ExpenseRow): Expense => {
     description: row.description ?? "",
     amount,
     gstIncluded,
-    gstClaimable: calculateGstClaimable(amount, gstIncluded, normalizedType),
+    gstClaimable: Number.isFinite(Number(row.gst_claimable))
+      ? Number(row.gst_claimable)
+      : calculateGstClaimable(amount, gstIncluded, normalizedType),
     receiptUrl: row.receipt_url ?? null,
     createdAt: row.created_at ?? undefined,
     updatedAt: row.updated_at ?? undefined,
@@ -122,6 +152,28 @@ export const getExpensesForCurrentUser = async (
   return (data ?? []).map(mapExpenseFromRow);
 };
 
+export const getExpensesForRange = async (
+  userId: string,
+  from: string,
+  to: string,
+): Promise<Expense[]> => {
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("date", from)
+    .lte("date", to)
+    .is("deleted_at", null)
+    .order("date", { ascending: false });
+
+  if (error) {
+    console.error("Failed to load expenses for range", error);
+    throw error;
+  }
+
+  return (data ?? []).map(mapExpenseFromRow);
+};
+
 
 export const getExpenseById = async (
   id: string,
@@ -147,6 +199,9 @@ export const createExpense = async (
   userId: string,
   input: ExpenseInput,
 ): Promise<Expense> => {
+  const frequency = await getUserFrequency(userId);
+  await ensurePeriodAllowsDate(userId, input.date, frequency);
+
   const payload = buildPayload(input, userId);
   const { data, error } = await supabase
     .from("expenses")
@@ -171,6 +226,26 @@ export const updateExpense = async (
   userId: string,
   input: ExpenseInput,
 ): Promise<Expense> => {
+  const { data: existing, error: existingError } = await supabase
+    .from("expenses")
+    .select("date")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (existingError) {
+    console.error("Failed to load expense for update", existingError);
+    throw existingError;
+  }
+
+  if (!existing) {
+    throw new Error("Transaction not found.");
+  }
+
+  const frequency = await getUserFrequency(userId);
+  await ensurePeriodAllowsDate(userId, existing.date, frequency);
+  await ensurePeriodAllowsDate(userId, input.date, frequency);
+
   const payload = buildPayload(input, userId);
   const { data, error } = await supabase
     .from("expenses")
@@ -193,6 +268,22 @@ export const updateExpense = async (
 };
 
 export const deleteExpense = async (id: string, userId: string) => {
+  const { data: existing, error: fetchError } = await supabase
+    .from("expenses")
+    .select("date")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("Failed to load expense for delete", fetchError);
+    throw fetchError;
+  }
+  if (!existing) throw new Error("Transaction not found.");
+
+  const frequency = await getUserFrequency(userId);
+  await ensurePeriodAllowsDate(userId, existing.date, frequency);
+
   const { error } = await supabase
     .from("expenses")
     .update({ deleted_at: new Date().toISOString() })
@@ -210,30 +301,13 @@ export const deleteExpense = async (id: string, userId: string) => {
 };
 
 export const calculateGstBreakdown = (records: Expense[]) => {
-  const normalTransactions = records.filter(
-    (tx) => !isIrdGstSettlement(tx),
-  );
-  const initial = {
-    totalExpenseAmount: 0,
-    totalExpenseGstClaimable: 0,
-    totalIncomeAmount: 0,
-  };
-  const totals = normalTransactions.reduce((acc, record) => {
-    if (record.type === "income") {
-      acc.totalIncomeAmount += record.amount;
-    } else {
-      acc.totalExpenseAmount += record.amount;
-      acc.totalExpenseGstClaimable += getTransactionGstClaimable(record);
-    }
-    return acc;
-  }, initial);
-
-  const totalIncomeGst = Math.round(((totals.totalIncomeAmount * 3) / 23) * 100) / 100;
-  const netGst = totalIncomeGst - totals.totalExpenseGstClaimable;
+  const summary = calculateGstSummary(records);
 
   return {
-    ...totals,
-    totalIncomeGst,
-    netGst,
+    totalExpenseAmount: summary.totalSpendingInclGst,
+    totalExpenseGstClaimable: summary.gstToClaim,
+    totalIncomeAmount: summary.totalSalesInclGst,
+    totalIncomeGst: summary.gstOnSales,
+    netGst: summary.netGst,
   };
 };

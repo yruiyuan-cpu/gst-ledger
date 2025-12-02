@@ -161,9 +161,10 @@ export default function BankImportPage() {
 
       const importedCount = result.imported ?? 0;
       const skippedCount = result.skipped ?? 0;
+      const lockedSkipped = (result as { lockedSkipped?: number }).lockedSkipped ?? 0;
 
       router.push(
-        `/transactions?imported=${importedCount}&skipped=${skippedCount}`,
+        `/transactions?imported=${importedCount}&skipped=${skippedCount}&locked=${lockedSkipped}`,
       );
     } catch (error) {
       const message =

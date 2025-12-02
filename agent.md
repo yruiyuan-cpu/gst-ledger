@@ -60,3 +60,33 @@
 - 扫一眼目录结构：pages/app、lib、components、supabaseClient 等
 - 找现有的数据表/类型定义（如有）
 - 明确本次任务属于 PRD 的 Must-have 还是 Nice-to-have
+
+## 10. GST period & settings schema（执行 SQL）
+在 Supabase SQL Editor 运行以下建表语句：
+```
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  gst_frequency text not null default 'two-monthly' check (
+    gst_frequency in ('monthly', 'two-monthly', 'six-monthly')
+  ),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists user_settings_user_id_idx on public.user_settings(user_id);
+
+create table if not exists public.gst_periods (
+  id bigserial primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  start_date date not null,
+  end_date date not null,
+  status text not null default 'open' check (status in ('open', 'ready_to_file', 'filed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, start_date, end_date)
+);
+create index if not exists gst_periods_user_date_idx on public.gst_periods(user_id, start_date, end_date);
+```
+
+## 11. GST 计算与锁账规则补充
+- GST 汇总需排除以下分类（不计入 Total/Net/GST）：Financial loan、Owner's funding、Pay to IRD、Refund from IRD 及其它 IRD 类别。
+- GST filed period 内禁止新增/编辑/删除交易；后端必须校验（不可只做前端拦截），报错提示：“This GST period has been filed. Changes are not allowed. Please create an adjustment in a later period instead.”

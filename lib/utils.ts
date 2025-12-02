@@ -1,4 +1,8 @@
 import type { Category, Expense } from "./transactions";
+import { isCategoryIncludedInGst } from "./categories";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type GstFrequency = "monthly" | "two-monthly" | "six-monthly";
 
 export const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-NZ", {
@@ -27,17 +31,7 @@ export const getDefaultGstIncluded = (
   _type: "expense" | "income",
   categoryName?: Category | null,
 ) => {
-  const name = (categoryName ?? "").toLowerCase();
-
-  // Exceptions: these should default to no GST.
-  if (name.includes("financial loan")) return false;
-  if (name.includes("owner") && name.includes("funding")) return false;
-  if (name.includes("pay to ird")) return false;
-  if (name.includes("refund from ird")) return false;
-  if (name.includes("ird")) return false;
-
-  // Everything else defaults to GST included.
-  return true;
+  return isCategoryIncludedInGst(categoryName ?? "") ?? true;
 };
 
 // Keep backward-compatible name used elsewhere.
@@ -72,8 +66,8 @@ export const isIrdGstSettlement = (tx: Expense) => {
 };
 
 export const calculateExpenseSummary = (transactions: Expense[]) => {
-  const normalTransactions = transactions.filter(
-    (tx) => !isIrdGstSettlement(tx),
+  const normalTransactions = transactions.filter((tx) =>
+    isCategoryIncludedInGst(tx.category),
   );
   const expenses = normalTransactions.filter((tx) => tx.type !== "income");
 
@@ -129,3 +123,125 @@ export const filterTransactionsByRange = (
     return date >= from && date <= to;
   });
 };
+
+export type GstSummary = {
+  totalSpendingInclGst: number;
+  totalSalesInclGst: number;
+  gstOnSales: number;
+  gstToClaim: number;
+  netGst: number;
+};
+
+const emptySummary: GstSummary = {
+  totalSpendingInclGst: 0,
+  totalSalesInclGst: 0,
+  gstOnSales: 0,
+  gstToClaim: 0,
+  netGst: 0,
+};
+
+export const calculateGstSummary = (expenses: Expense[]): GstSummary => {
+  if (!expenses?.length) return emptySummary;
+
+  const eligible = expenses.filter((tx) => isCategoryIncludedInGst(tx.category));
+  const income = eligible.filter((tx) => tx.type === "income");
+  const spending = eligible.filter((tx) => tx.type !== "income");
+
+  const totalSalesInclGst = income.reduce(
+    (sum, tx) => sum + Math.abs(tx.amount),
+    0,
+  );
+  const totalSpendingInclGst = spending.reduce(
+    (sum, tx) => sum + Math.abs(tx.amount),
+    0,
+  );
+
+  const gstOnSales = income
+    .filter((tx) => tx.gstIncluded)
+    .reduce((sum, tx) => sum + calculateGstFromGross(Math.abs(tx.amount)), 0);
+
+  const gstToClaim = spending
+    .filter((tx) => tx.gstIncluded)
+    .reduce(
+      (sum, tx) => sum + getTransactionGstClaimable(tx),
+      0,
+    );
+
+  const netGst = gstOnSales - gstToClaim;
+
+  return {
+    totalSpendingInclGst,
+    totalSalesInclGst,
+    gstOnSales,
+    gstToClaim,
+    netGst,
+  };
+};
+
+type ExpenseRow = {
+  id: string | number;
+  user_id: string;
+  date: string;
+  category: string;
+  description?: string | null;
+  amount: number | string;
+  gst_included: boolean;
+  gst_claimable?: number | string | null;
+  receipt_url?: string | null;
+  type?: string;
+  deleted_at?: string | null;
+};
+
+const mapExpenseRow = (row: ExpenseRow): Expense => {
+  const normalizedType =
+    row.type && row.type.toLowerCase() === "income" ? "income" : "expense";
+  const amount = Number(row.amount ?? 0);
+
+  return {
+    id: String(row.id),
+    userId: row.user_id,
+    date: row.date,
+    category: row.category,
+    description: row.description ?? "",
+    amount,
+    gstIncluded: Boolean(row.gst_included),
+    gstClaimable: Number.isFinite(Number(row.gst_claimable))
+      ? Number(row.gst_claimable)
+      : calculateGstClaimable(amount, Boolean(row.gst_included), normalizedType),
+    receiptUrl: row.receipt_url ?? null,
+    type: normalizedType,
+  };
+};
+
+const formatDateOnly = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+export async function getGstSummaryForRange(
+  supabase: SupabaseClient,
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<GstSummary> {
+  const fromStr = formatDateOnly(from);
+  const toStr = formatDateOnly(to);
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("date", fromStr)
+    .lte("date", toStr)
+    .is("deleted_at", null);
+
+  if (error) {
+    console.error("Failed to load expenses for GST summary", error);
+    return emptySummary;
+  }
+
+  const expenses = (data ?? []).map(mapExpenseRow);
+  return calculateGstSummary(expenses);
+}

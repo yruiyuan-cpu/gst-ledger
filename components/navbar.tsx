@@ -20,6 +20,22 @@ const Navbar = () => {
           GST Ledger
         </Link>
         {user && (
+          <nav className="hidden items-center gap-4 text-sm font-medium text-slate-700 sm:flex">
+            <Link href="/" className="hover:text-blue-700">
+              Dashboard
+            </Link>
+            <Link href="/transactions" className="hover:text-blue-700">
+              Transactions
+            </Link>
+            <Link href="/gst-return" className="hover:text-blue-700">
+              GST return
+            </Link>
+            <Link href="/settings" className="hover:text-blue-700">
+              Settings
+            </Link>
+          </nav>
+        )}
+        {user && (
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-slate-600 sm:inline">
               {user.email}
